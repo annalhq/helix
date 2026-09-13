@@ -6,8 +6,6 @@ Helix runs a 3-node Raft cluster on Kubernetes (kind), attacks it with network p
 
 It is modeled on [Jepsen](https://jepsen.io) and [Knossos](https://github.com/jepsen-io/knossos).
 
----
-
 ## Demo
 
 Three runs with the same workload and seed:
@@ -21,34 +19,6 @@ Three runs with the same workload and seed:
 | Timeline | ![](results/01-baseline/timeline.png) | ![](results/02-naive-partition/timeline.png) | ![](results/03-fixed-partition/timeline.png) |
 
 **What breaks in the naive mode:** the partition leaves the old leader in the minority. It still believes it is leader and keeps answering reads from its own state, while the majority elects a new leader and accepts newer writes. Clients connected to the old leader read stale values, and the checker reports exactly which read contradicted which acknowledged write. In `log` mode, reads are committed through Raft, so a deposed leader can't answer them.
-
----
-
-## How it works
-
-```
-                      kind cluster, namespace "helix"
- ┌───────────────────────────────────────────────────────────────────┐
- │  control pod                  StatefulSet "kv"                     │
- │ ┌──────────────┐  JSON lines  ┌──────┐   ┌──────┐   ┌──────┐       │
- │ │ workload     │─────────────▶│ kv-0 │◀─▶│ kv-1 │◀─▶│ kv-2 │       │
- │ │ 6 clients    │    :8000     └──────┘   └──────┘   └──────┘       │
- │ └──────────────┘                 net/rpc: Raft + forwarding :7000   │
- └───────────────────────────────────────────────────────────────────┘
-        ▲                                ▲
-        │ history.jsonl                  │ iptables / SIGKILL / SIGSTOP
- ┌──────┴────────────────────────────────┴──────────────────────────┐
- │ host:  run  ──▶  nemesis  ──▶  checker  ──▶  report + timeline    │
- └──────────────────────────────────────────────────────────────────┘
-```
-
-1. **Reset:** the cluster restarts from empty state with the chosen read mode.
-2. **Workload:** six clients, each pinned to one node, send a seeded mix of `get`, `put`, and `cas` requests and record when each op started, when it finished, and its result.
-3. **Nemesis:** a seeded schedule injects real faults: iptables partitions inside the pods, `SIGKILL`, and `SIGSTOP`/`SIGCONT`. Every fault is healed on exit.
-4. **Check:** the history is split by key and searched for a valid linearization.
-5. **Report:** you get a verdict, an explanation of any violation, and a timeline PNG.
-
----
 
 ## Quick start
 
@@ -74,7 +44,6 @@ Each run writes to `results/<name>/`:
 | `verdict.json`, `verdict.txt` | checker result and violation explanation |
 | `timeline.png` | client timelines with fault windows and violating ops highlighted |
 
----
 
 ## Usage
 
@@ -107,8 +76,6 @@ python -m harness.client --addr 127.0.0.1:8000 cas k0 3 4
 python -m harness.client --addr 127.0.0.1:8000 get k0
 python -m harness.client --addr 127.0.0.1:8000 status
 ```
-
----
 
 ## Design
 
@@ -155,36 +122,12 @@ Clients never retry, and a CAS that ran but found a different value is recorded 
 - **Crashes and pauses** target `kvnode` under a supervisor loop (not PID 1), so the pod, its IP, and its Raft state survive.
 - **Storage:** Raft state lives on a memory-backed volume. The fault model covers process crashes, pauses, and partitions; it doesn't cover OS or power loss.
 
----
 
 ## Scope
 
 **In scope:** one Raft implementation; register + CAS; partitions, crashes, and pauses; 3 nodes on a local kind cluster; CLI output and one PNG per run.
 
 **Out of scope:** other data types, snapshots and membership changes, clock-skew faults, durability across power loss, dashboards, and pluggable consensus.
-
----
-
-## Project layout
-
-```
-cmd/kvnode/          node binary
-internal/raft/       election, replication, commit, WAL, RPC transport
-internal/rpcpeer/    net/rpc clients with timeouts and send/no-send semantics
-internal/kv/         state machine, request routing, JSON edge, forwarding
-deploy/              kind config, StatefulSet, services, control pod, images
-harness/client.py    JSON client and CLI
-harness/workload.py  seeded concurrent workload
-harness/history.py   history format and validation
-harness/nemesis.py   fault schedules
-harness/run.py       run orchestration on kind
-harness/checker/     register model, brute-force reference, linearizability checker, reports
-harness/viz.py       timeline rendering
-harness/tests/       unit, property, and local-cluster tests
-results/             demo runs
-```
-
----
 
 ## References
 
