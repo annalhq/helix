@@ -18,6 +18,10 @@ type submitFunc func(ctx context.Context, cmd Command) (Result, error)
 
 func (f submitFunc) Submit(ctx context.Context, cmd Command) (Result, error) { return f(ctx, cmd) }
 
+func (f submitFunc) Status() NodeStatus {
+	return NodeStatus{ID: "kv-1", Role: "leader", Term: 4, Leader: "kv-1", CommitIndex: 9, LastApplied: 9, LastLogIndex: 10, ReadMode: ReadLog}
+}
+
 type edgeConn struct {
 	t    *testing.T
 	conn net.Conn
@@ -42,6 +46,12 @@ func dialEdge(t *testing.T, e *Edge) *edgeConn {
 	t.Cleanup(func() { conn.Close() })
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
 	return &edgeConn{t: t, conn: conn, r: bufio.NewReader(conn)}
+}
+
+func dialRealEdge(t *testing.T) *edgeConn {
+	t.Helper()
+	svc, _ := newSingleNodeService(t, ReadLocal)
+	return dialEdge(t, NewEdge(svc, discardLogger()))
 }
 
 func (c *edgeConn) send(line string) obj {
@@ -70,7 +80,7 @@ func expect(t *testing.T, req string, got, want obj) {
 }
 
 func TestEdgeRoundTrip(t *testing.T) {
-	c := dialEdge(t, NewEdge(NewService(NewStateMachine(), ReadLocal), discardLogger()))
+	c := dialRealEdge(t)
 	steps := []struct {
 		req  string
 		want obj
@@ -89,7 +99,7 @@ func TestEdgeRoundTrip(t *testing.T) {
 }
 
 func TestEdgeBadRequests(t *testing.T) {
-	c := dialEdge(t, NewEdge(NewService(NewStateMachine(), ReadLocal), discardLogger()))
+	c := dialRealEdge(t)
 	bad := []struct {
 		req string
 		id  any
@@ -106,6 +116,14 @@ func TestEdgeBadRequests(t *testing.T) {
 		expect(t, b.req, c.send(b.req), obj{"id": b.id, "ok": false, "err": "bad_request", "outcome": "definite"})
 	}
 	expect(t, "after bad requests", c.send(`{"id":9,"op":"get","key":"k0"}`), obj{"id": 9.0, "outcome": "applied"})
+}
+
+func TestEdgeStatus(t *testing.T) {
+	c := dialEdge(t, NewEdge(submitFunc(nil), discardLogger()))
+	got := c.send(`{"id":1,"op":"status"}`)
+	expect(t, "status", got, obj{"id": 1.0, "ok": true, "outcome": "applied"})
+	st, _ := got["status"].(obj)
+	expect(t, "status body", st, obj{"id": "kv-1", "role": "leader", "term": 4.0, "leader": "kv-1", "last_log_index": 10.0, "read_mode": "log"})
 }
 
 func TestEdgeErrorOutcomes(t *testing.T) {

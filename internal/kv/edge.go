@@ -16,8 +16,9 @@ const (
 	maxLineBytes   = 64 << 10
 )
 
-type Submitter interface {
+type Backend interface {
 	Submit(ctx context.Context, cmd Command) (Result, error)
+	Status() NodeStatus
 }
 
 type request struct {
@@ -37,16 +38,17 @@ type response struct {
 	Detail     string          `json:"detail,omitempty"`
 	Outcome    Outcome         `json:"outcome"`
 	LeaderHint string          `json:"leader_hint,omitempty"`
+	Status     *NodeStatus     `json:"status,omitempty"`
 }
 
 type Edge struct {
-	svc     Submitter
+	backend Backend
 	logger  *log.Logger
 	timeout time.Duration
 }
 
-func NewEdge(svc Submitter, logger *log.Logger) *Edge {
-	return &Edge{svc: svc, logger: logger, timeout: RequestTimeout}
+func NewEdge(backend Backend, logger *log.Logger) *Edge {
+	return &Edge{backend: backend, logger: logger, timeout: RequestTimeout}
 }
 
 func (e *Edge) Serve(ln net.Listener) error {
@@ -91,6 +93,10 @@ func (e *Edge) process(line []byte) response {
 	if err := json.Unmarshal(line, &req); err != nil {
 		return errorResponse(nil, BadRequest("invalid json: "+err.Error()))
 	}
+	if req.Op == "status" {
+		st := e.backend.Status()
+		return response{ID: req.ID, OK: true, Outcome: Applied, Status: &st}
+	}
 	cmd, err := req.command()
 	if err != nil {
 		return errorResponse(req.ID, AsError(err))
@@ -98,7 +104,7 @@ func (e *Edge) process(line []byte) response {
 
 	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
 	defer cancel()
-	res, err := e.svc.Submit(ctx, cmd)
+	res, err := e.backend.Submit(ctx, cmd)
 	if err != nil {
 		return errorResponse(req.ID, AsError(err))
 	}

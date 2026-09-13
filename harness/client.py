@@ -42,11 +42,14 @@ class Client:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self._sock, self._rfile = sock, sock.makefile("rb")
 
-    def call(self, op, key, **fields):
+    def call(self, op, key=None, **fields):
         if self._sock is None:
             self._connect()
         req_id = next(self._ids)
-        line = json.dumps({"id": req_id, "op": op, "key": key, **fields}).encode() + b"\n"
+        request = {"id": req_id, "op": op, **fields}
+        if key is not None:
+            request["key"] = key
+        line = json.dumps(request).encode() + b"\n"
 
         # Once any byte may have left, a failure no longer proves the op had no effect.
         try:
@@ -77,6 +80,9 @@ class Client:
     def cas(self, key, old, new):
         return self.call("cas", key, old=old, new=new)
 
+    def status(self):
+        return self.call("status")
+
 
 EXIT_CODES = {"applied": 0, "definite": 1, "unknown": 2}
 
@@ -86,6 +92,7 @@ def main(argv=None):
     p.add_argument("--addr", default="127.0.0.1:8000")
     p.add_argument("--timeout", type=float, default=3.0)
     sub = p.add_subparsers(dest="op", required=True)
+    sub.add_parser("status")
     sub.add_parser("get").add_argument("key")
     put = sub.add_parser("put")
     put.add_argument("key")
@@ -98,7 +105,9 @@ def main(argv=None):
 
     with Client(args.addr, args.timeout) as client:
         try:
-            if args.op == "get":
+            if args.op == "status":
+                resp = client.status()
+            elif args.op == "get":
                 resp = client.get(args.key)
             elif args.op == "put":
                 resp = client.put(args.key, args.value)

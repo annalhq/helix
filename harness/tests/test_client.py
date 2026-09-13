@@ -1,52 +1,17 @@
 import json
-import shutil
 import socket
-import subprocess
 import threading
-import time
-from pathlib import Path
 
 import pytest
 
 from harness.client import Client, Indeterminate, NotSent, main
-
-ROOT = Path(__file__).resolve().parents[2]
-
-
-def free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from harness.localcluster import LocalCluster, free_port
 
 
 @pytest.fixture(scope="module")
-def node(tmp_path_factory):
-    if shutil.which("go") is None:
-        pytest.skip("go toolchain not installed")
-    tmp = tmp_path_factory.mktemp("kvnode")
-    binary = tmp / "kvnode"
-    subprocess.run(["go", "build", "-o", str(binary), "./cmd/kvnode"], cwd=ROOT, check=True)
-
-    addr = f"127.0.0.1:{free_port()}"
-    log_path = tmp / "kvnode.log"
-    with open(log_path, "wb") as log:
-        proc = subprocess.Popen([str(binary), "--id", "test", "--client-addr", addr], stderr=log)
-    try:
-        deadline = time.monotonic() + 10
-        while True:
-            if proc.poll() is not None:
-                pytest.fail(f"kvnode exited early:\n{log_path.read_text()}")
-            try:
-                socket.create_connection(addr.rsplit(":", 1), timeout=0.2).close()
-                break
-            except OSError:
-                if time.monotonic() > deadline:
-                    pytest.fail("kvnode did not start listening")
-                time.sleep(0.05)
-        yield addr
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+def node(kvnode_binary, tmp_path_factory):
+    with LocalCluster(kvnode_binary, tmp_path_factory.mktemp("single"), size=1) as cluster:
+        yield cluster.wait_leader().client_addr
 
 
 def test_put_get_cas_roundtrip(node):
@@ -72,6 +37,13 @@ def test_bad_request_is_definite(node):
         assert c.get("k0")["outcome"] == "applied"
 
 
+def test_status(node):
+    with Client(node) as c:
+        st = c.status()["status"]
+    assert (st["id"], st["role"], st["leader"], st["read_mode"]) == ("kv-0", "leader", "kv-0", "local")
+    assert st["term"] >= 1 and st["last_applied"] <= st["commit_index"] <= st["last_log_index"]
+
+
 def test_separate_connections_see_same_state(node):
     with Client(node) as a, Client(node) as b:
         a.put("shared", 2)
@@ -84,6 +56,8 @@ def test_cli(node, capsys):
     capsys.readouterr()
     assert main(["--addr", node, "get", "cli"]) == 0
     assert json.loads(capsys.readouterr().out)["value"] == 3
+    assert main(["--addr", node, "status"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"]["role"] == "leader"
 
 
 def test_connection_refused_is_not_sent():
