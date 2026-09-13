@@ -1,5 +1,4 @@
 import sys
-import time
 
 from harness import k8s
 
@@ -17,30 +16,10 @@ def fail(msg):
 
 
 def wait_until(predicate, what, timeout=30.0):
-    deadline = time.monotonic() + timeout
-    while True:
-        value = predicate()
-        if value:
-            return value
-        if time.monotonic() > deadline:
-            fail(f"timed out after {timeout}s waiting for {what}")
-        time.sleep(0.5)
-
-
-def status(pod):
-    code, reply, _ = k8s.client(pod, "status", timeout=1.0)
-    return reply["status"] if code == 0 and reply else None
-
-
-def leader(after_term=0):
-    live = {p: s for p in k8s.KV_PODS if (s := status(p))}
-    leaders = [p for p, s in live.items() if s["role"] == "leader" and s["term"] > after_term]
-    if not leaders:
-        return None
-    best = max(leaders, key=lambda p: live[p]["term"])
-    if any(s["term"] > live[best]["term"] for s in live.values()):
-        return None
-    return best, live[best]["term"]
+    try:
+        return k8s.wait_until(predicate, what, timeout)
+    except TimeoutError as e:
+        fail(str(e))
 
 
 def expect_applied(pod, *args):
@@ -57,7 +36,7 @@ def local_value(pod, key):
 
 def main():
     step("waiting for a leader")
-    old, old_term = wait_until(leader, "an initial leader")
+    old, old_term = wait_until(k8s.leader, "an initial leader")
     follower = next(p for p in k8s.KV_PODS if p != old)
     print(f"    leader {old} (term {old_term}), writing through follower {follower}")
 
@@ -69,7 +48,7 @@ def main():
     step(f"SIGKILL kvnode on leader {old}")
     k8s.kubectl("exec", old, "--", "pkill", "-9", "kvnode")
 
-    new, new_term = wait_until(lambda: leader(after_term=old_term), "re-election")
+    new, new_term = wait_until(lambda: k8s.leader(after_term=old_term), "re-election")
     print(f"    new leader {new} (term {new_term})")
     writer = next(p for p in k8s.KV_PODS if p not in (old, new))
     expect_applied(writer, "put", "smoke", "2")
@@ -78,7 +57,7 @@ def main():
 
     step(f"waiting for {old} to restart under the supervisor and catch up")
     wait_until(lambda: local_value(old, "smoke") == 3, f"{old} to apply smoke=3")
-    st = status(old)
+    st = k8s.status(old)
     if st["role"] != "follower" or st["term"] < new_term:
         fail(f"restarted node status {st}")
     if k8s.restart_count(old) != restarts:
