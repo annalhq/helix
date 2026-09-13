@@ -3,4 +3,5 @@ __pycache__/
 .pytest_cache/
 .hypothesis/
 bin/
+results/scratch*/
 *.pyc

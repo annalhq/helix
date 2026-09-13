@@ -6,7 +6,7 @@ KIND          ?= $(shell command -v kind 2>/dev/null || echo $(HOME)/go/bin/kind
 KV_IMAGE      := helix/kvnode:dev
 CONTROL_IMAGE := helix/control:dev
 
-.PHONY: build run-node images kind-up kind-down deploy undeploy smoke-iptables smoke-raft test \
+.PHONY: build run-node images kind-up kind-down deploy undeploy smoke-iptables smoke-raft run test \
         run-baseline run-naive run-fixed check viz
 
 build:
@@ -47,6 +47,14 @@ smoke-iptables:
 
 smoke-raft:
 	$(PY) -m harness.smoke_raft
+
+NAME      ?= scratch
+READ_MODE ?= local
+DURATION  ?= 30
+CLIENTS   ?= 6
+
+run:
+	$(PY) -m harness.run --name $(NAME) --read-mode $(READ_MODE) --duration $(DURATION) --clients $(CLIENTS) --seed $(SEED) $(RUN_FLAGS)
 
 test:
 	go vet ./...
