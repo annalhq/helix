@@ -40,7 +40,6 @@ deploy:
 undeploy:
 	kubectl -n $(NS) delete statefulset kv --ignore-not-found --wait
 	kubectl -n $(NS) delete pod control --ignore-not-found
-	kubectl -n $(NS) delete pvc -l app=kv --ignore-not-found
 	kubectl -n $(NS) delete svc kv --ignore-not-found
 
 smoke-iptables:

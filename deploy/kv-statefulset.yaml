@@ -47,13 +47,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-        labels:
-          app: kv
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 64Mi
+      volumes:
+        # tmpfs, not a PVC: host btrfs fsync stalls (up to 3 s) caused spurious elections.
+        # Injected faults kill or pause kvnode inside a live pod, so tmpfs state survives them.
+        - name: data
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
