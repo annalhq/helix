@@ -50,7 +50,7 @@ func dialEdge(t *testing.T, e *Edge) *edgeConn {
 
 func dialRealEdge(t *testing.T) *edgeConn {
 	t.Helper()
-	svc, _ := newSingleNodeService(t, ReadLocal)
+	svc, _ := newSingleNodeService(t, ReadLeader)
 	return dialEdge(t, NewEdge(svc, discardLogger()))
 }
 

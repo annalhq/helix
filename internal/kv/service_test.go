@@ -53,18 +53,20 @@ func expectCode(t *testing.T, what string, got *Error, code string, outcome Outc
 }
 
 func TestParseReadMode(t *testing.T) {
-	for _, s := range []string{"local", "log"} {
+	for _, s := range []string{"leader", "log"} {
 		if m, err := ParseReadMode(s); err != nil || string(m) != s {
 			t.Errorf("ParseReadMode(%q) = %q, %v", s, m, err)
 		}
 	}
-	if _, err := ParseReadMode("quorum"); err == nil {
-		t.Error("ParseReadMode(quorum) should fail")
+	for _, s := range []string{"local", "quorum"} {
+		if _, err := ParseReadMode(s); err == nil {
+			t.Errorf("ParseReadMode(%q) should fail", s)
+		}
 	}
 }
 
 func TestServiceRejectsInvalidCommands(t *testing.T) {
-	svc := NewService(NewStateMachine(), ReadLocal)
+	svc := NewService(NewStateMachine(), ReadLeader)
 	for _, cmd := range []Command{{Op: "del", Key: "k0"}, {Op: OpGet}} {
 		_, err := submit(t, svc, cmd)
 		expectCode(t, "invalid command", err, CodeBadRequest, Definite)
@@ -92,8 +94,8 @@ func TestServiceReplicatesEverythingInLogMode(t *testing.T) {
 	}
 }
 
-func TestServiceLocalReadsBypassTheLog(t *testing.T) {
-	svc, r := newSingleNodeService(t, ReadLocal)
+func TestServiceLeaderReadsBypassTheLog(t *testing.T) {
+	svc, r := newSingleNodeService(t, ReadLeader)
 	if _, err := submit(t, svc, Command{Op: OpPut, Key: "k0", Value: 7}); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,7 @@ func TestServiceLocalReadsBypassTheLog(t *testing.T) {
 		t.Fatalf("get: %+v %v", res, err)
 	}
 	if after := r.Status().LastLogIndex; after != before {
-		t.Fatalf("local read appended to the log (%d -> %d)", before, after)
+		t.Fatalf("leader read appended to the log (%d -> %d)", before, after)
 	}
 }
 
@@ -112,6 +114,7 @@ type fakeConsensus struct {
 	term     uint64
 	index    uint64
 	proposed chan raft.ApplyMsg
+	status   raft.Status
 }
 
 func (f *fakeConsensus) Propose(cmd []byte) (uint64, uint64, error) {
@@ -123,7 +126,7 @@ func (f *fakeConsensus) Propose(cmd []byte) (uint64, uint64, error) {
 	return f.index, f.term, nil
 }
 
-func (f *fakeConsensus) Status() raft.Status { return raft.Status{ID: "fake"} }
+func (f *fakeConsensus) Status() raft.Status { return f.status }
 
 type fakeForwarder func(ctx context.Context, leaderID string, cmd Command) (Result, error)
 
@@ -154,6 +157,31 @@ func TestServiceWhenNotLeader(t *testing.T) {
 	if AsError(fwdErr).LeaderHint != "kv-1" {
 		t.Fatalf("leader hint %q, want kv-1", AsError(fwdErr).LeaderHint)
 	}
+}
+
+func TestServiceLeaderReadOnFollower(t *testing.T) {
+	get := Command{Op: OpGet, Key: "k0"}
+
+	svc := NewService(NewStateMachine(), ReadLeader)
+	svc.Attach(&fakeConsensus{status: raft.Status{Role: raft.Follower}}, nil)
+	_, err := submit(t, svc, get)
+	expectCode(t, "follower with no known leader", err, CodeUnavailable, Definite)
+
+	var forwardedTo string
+	var forwarded Command
+	svc.Attach(&fakeConsensus{status: raft.Status{Role: raft.Follower, LeaderID: "kv-2"}}, fakeForwarder(
+		func(_ context.Context, leaderID string, cmd Command) (Result, error) {
+			forwardedTo, forwarded = leaderID, cmd
+			v := 5
+			return Result{OK: true, Value: &v}, nil
+		}))
+	res, err := submit(t, svc, get)
+	if err != nil || res.Value == nil || *res.Value != 5 || forwardedTo != "kv-2" || forwarded != get {
+		t.Fatalf("forwarded read: %+v %v, sent %+v to %q", res, err, forwarded, forwardedTo)
+	}
+
+	_, fwdErr := svc.submit(context.Background(), get, false)
+	expectCode(t, "forwarded read on a non-leader", AsError(fwdErr), CodeNotLeader, Definite)
 }
 
 func TestServiceWaitsForItsOwnEntry(t *testing.T) {

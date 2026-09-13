@@ -25,7 +25,7 @@ func main() {
 	raftAddr := flag.String("raft-addr", ":7000", "listen address for internal net/rpc (raft and forwarding)")
 	peersFlag := flag.String("peers", "", "comma-separated id=host:port raft addresses of cluster members (self is ignored)")
 	dataDir := flag.String("data-dir", "data", "directory for the raft write-ahead log")
-	readMode := flag.String("read-mode", "local", "read path: local|log")
+	readMode := flag.String("read-mode", "leader", "read path: leader|log")
 	flag.Parse()
 
 	logger := log.New(os.Stderr, *id+" ", log.LstdFlags|log.Lmicroseconds|log.Lmsgprefix)

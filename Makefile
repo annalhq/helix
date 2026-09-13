@@ -14,7 +14,7 @@ build:
 
 run-node: build
 	rm -rf bin/data/kv-0
-	./bin/kvnode --id kv-0 --client-addr 127.0.0.1:8000 --raft-addr 127.0.0.1:7000 --data-dir bin/data/kv-0 --read-mode local
+	./bin/kvnode --id kv-0 --client-addr 127.0.0.1:8000 --raft-addr 127.0.0.1:7000 --data-dir bin/data/kv-0 --read-mode leader
 
 images:
 	CGO_ENABLED=0 GOOS=linux go build -o bin/kvnode-linux ./cmd/kvnode
@@ -49,7 +49,7 @@ smoke-raft:
 	$(PY) -m harness.smoke_raft
 
 NAME      ?= scratch
-READ_MODE ?= local
+READ_MODE ?= leader
 DURATION  ?= 30
 CLIENTS   ?= 6
 

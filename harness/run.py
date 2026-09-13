@@ -89,7 +89,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="python -m harness.run")
     p.add_argument("--name", required=True, help="results/<name> receives history, node logs, run.json")
     p.add_argument("--results-dir", default=str(ROOT / "results"))
-    p.add_argument("--read-mode", choices=("local", "log"), default="local")
+    p.add_argument("--read-mode", choices=("leader", "log"), default="leader")
     p.add_argument("--duration", type=float, default=30.0)
     p.add_argument("--clients", type=int, default=6)
     p.add_argument("--seed", type=int, default=42)

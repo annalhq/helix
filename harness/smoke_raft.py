@@ -29,9 +29,9 @@ def expect_applied(pod, *args):
     return reply
 
 
-def local_value(pod, key):
-    code, reply, _ = k8s.client(pod, "get", key, timeout=1.0)
-    return reply.get("value") if code == 0 and reply else None
+def applied_through(pod, index):
+    st = k8s.status(pod)
+    return st is not None and st["last_applied"] >= index
 
 
 def main():
@@ -56,7 +56,10 @@ def main():
         fail("cas 2 -> 3 through a follower did not apply")
 
     step(f"waiting for {old} to restart under the supervisor and catch up")
-    wait_until(lambda: local_value(old, "smoke") == 3, f"{old} to apply smoke=3")
+    commit = k8s.status(new)["commit_index"]
+    wait_until(lambda: applied_through(old, commit), f"{old} to apply through index {commit}")
+    if expect_applied(old, "get", "smoke")["value"] != 3:
+        fail(f"read through restarted {old} does not return smoke=3")
     st = k8s.status(old)
     if st["role"] != "follower" or st["term"] < new_term:
         fail(f"restarted node status {st}")

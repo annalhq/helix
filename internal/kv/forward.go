@@ -16,9 +16,12 @@ type ForwardArgs struct {
 	Timeout time.Duration
 }
 
+// gob drops zero values even behind pointers, so a *int holding 0 would decode as absent
 type ForwardReply struct {
-	Result Result
-	Err    *Error
+	OK       bool
+	Value    int
+	HasValue bool
+	Err      *Error
 }
 
 type ForwardServer struct {
@@ -37,7 +40,10 @@ func (f *ForwardServer) Forward(args *ForwardArgs, reply *ForwardReply) error {
 		reply.Err = AsError(err)
 		return nil
 	}
-	reply.Result = res
+	reply.OK = res.OK
+	if res.Value != nil {
+		reply.Value, reply.HasValue = *res.Value, true
+	}
 	return nil
 }
 
@@ -69,5 +75,10 @@ func (f *RPCForwarder) Forward(ctx context.Context, leaderID string, cmd Command
 	if reply.Err != nil {
 		return Result{}, reply.Err
 	}
-	return reply.Result, nil
+	res := Result{OK: reply.OK}
+	if reply.HasValue {
+		v := reply.Value
+		res.Value = &v
+	}
+	return res, nil
 }

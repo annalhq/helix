@@ -73,7 +73,7 @@ class Node:
 
 
 class LocalCluster:
-    def __init__(self, binary, workdir, size=3, read_mode="local"):
+    def __init__(self, binary, workdir, size=3, read_mode="leader"):
         Path(workdir).mkdir(parents=True, exist_ok=True)
         ids = [f"kv-{i}" for i in range(size)]
         raft_addrs = {i: f"127.0.0.1:{free_port()}" for i in ids}

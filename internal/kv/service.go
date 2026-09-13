@@ -12,16 +12,16 @@ import (
 type ReadMode string
 
 const (
-	ReadLocal ReadMode = "local"
-	ReadLog   ReadMode = "log"
+	ReadLeader ReadMode = "leader"
+	ReadLog    ReadMode = "log"
 )
 
 func ParseReadMode(s string) (ReadMode, error) {
 	switch m := ReadMode(s); m {
-	case ReadLocal, ReadLog:
+	case ReadLeader, ReadLog:
 		return m, nil
 	}
-	return "", fmt.Errorf("invalid read mode %q (want local or log)", s)
+	return "", fmt.Errorf("invalid read mode %q (want leader or log)", s)
 }
 
 type Consensus interface {
@@ -100,11 +100,22 @@ func (s *Service) submit(ctx context.Context, cmd Command, mayForward bool) (Res
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	// read-mode=local: any node answers from whatever it has applied, even a deposed leader
-	if cmd.Op == OpGet && s.readMode == ReadLocal {
-		return s.sm.Apply(cmd), nil
+	if cmd.Op == OpGet && s.readMode == ReadLeader {
+		return s.leaderRead(ctx, cmd, mayForward)
 	}
 	return s.replicate(ctx, cmd, mayForward)
+}
+
+/** read-mode=leader: a node that believes it is leader answers from its applied
+    state without confirming a majority still follows it. A deposed leader cut
+    off by a partition keeps answering with stale data, which is the planted bug
+**/
+func (s *Service) leaderRead(ctx context.Context, cmd Command, mayForward bool) (Result, error) {
+	st := s.consensus.Status()
+	if st.Role == raft.Leader {
+		return s.sm.Apply(cmd), nil
+	}
+	return s.forward(ctx, st.LeaderID, cmd, mayForward)
 }
 
 /** s.mu is held across Propose and waiter registration so Apply cannot
@@ -120,13 +131,7 @@ func (s *Service) replicate(ctx context.Context, cmd Command, mayForward bool) (
 		if !errors.As(err, &notLeader) {
 			return Result{}, err
 		}
-		if !mayForward {
-			return Result{}, NotLeader(notLeader.LeaderID)
-		}
-		if notLeader.LeaderID == "" || s.forwarder == nil {
-			return Result{}, Unavailable("no known leader")
-		}
-		return s.forwarder.Forward(ctx, notLeader.LeaderID, cmd)
+		return s.forward(ctx, notLeader.LeaderID, cmd, mayForward)
 	}
 	ch := make(chan applied, 1)
 	s.waiters[index] = waiter{term: term, ch: ch}
@@ -148,6 +153,17 @@ func (s *Service) replicate(ctx context.Context, cmd Command, mayForward bool) (
 			return Result{}, ctx.Err()
 		}
 	}
+}
+
+// A request that was itself forwarded is never forwarded again
+func (s *Service) forward(ctx context.Context, leaderID string, cmd Command, mayForward bool) (Result, error) {
+	if !mayForward {
+		return Result{}, NotLeader(leaderID)
+	}
+	if leaderID == "" || s.forwarder == nil {
+		return Result{}, Unavailable("no known leader")
+	}
+	return s.forwarder.Forward(ctx, leaderID, cmd)
 }
 
 // A different term at our index means another leader's entry won the slot, so ours was never applied there

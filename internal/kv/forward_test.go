@@ -35,6 +35,26 @@ func followerOf(t *testing.T, leaderID, leaderAddr string) *Service {
 	return svc
 }
 
+func TestForwardLeaderReadOverRPC(t *testing.T) {
+	leader, r := newSingleNodeService(t, ReadLeader)
+	if res, err := submit(t, leader, Command{Op: OpPut, Key: "k0", Value: 6}); err != nil || !res.OK {
+		t.Fatalf("put on leader: %+v %v", res, err)
+	}
+	clients := rpcpeer.New(map[string]string{"solo": serveForwarding(t, leader)})
+	t.Cleanup(clients.Close)
+	follower := NewService(NewStateMachine(), ReadLeader)
+	follower.Attach(&fakeConsensus{status: raft.Status{Role: raft.Follower, LeaderID: "solo"}}, NewRPCForwarder(clients))
+
+	before := r.Status().LastLogIndex
+	res, err := submit(t, follower, Command{Op: OpGet, Key: "k0"})
+	if err != nil || res.Value == nil || *res.Value != 6 {
+		t.Fatalf("forwarded leader read: %+v %v", res, err)
+	}
+	if after := r.Status().LastLogIndex; after != before {
+		t.Fatalf("leader read went through the log (%d -> %d)", before, after)
+	}
+}
+
 func TestForwardOverRPC(t *testing.T) {
 	leader, _ := newSingleNodeService(t, ReadLog)
 	follower := followerOf(t, "solo", serveForwarding(t, leader))
@@ -91,5 +111,30 @@ func TestForwardHonoursCallerDeadline(t *testing.T) {
 	expectCode(t, "leader never commits", AsError(err), CodeTimeout, Unknown)
 	if elapsed := time.Since(start); elapsed > 350*time.Millisecond {
 		t.Fatalf("forward took %v, longer than the caller's deadline", elapsed)
+	}
+}
+
+func TestForwardedReadDistinguishesZeroFromAbsent(t *testing.T) {
+	for _, mode := range []ReadMode{ReadLeader, ReadLog} {
+		leader, _ := newSingleNodeService(t, mode)
+		if res, err := submit(t, leader, Command{Op: OpPut, Key: "zero", Value: 0}); err != nil || !res.OK {
+			t.Fatalf("%s: put 0: %+v %v", mode, res, err)
+		}
+		clients := rpcpeer.New(map[string]string{"solo": serveForwarding(t, leader)})
+		t.Cleanup(clients.Close)
+		follower := NewService(NewStateMachine(), mode)
+		follower.Attach(&fakeConsensus{
+			err:    &raft.NotLeaderError{LeaderID: "solo"},
+			status: raft.Status{Role: raft.Follower, LeaderID: "solo"},
+		}, NewRPCForwarder(clients))
+
+		res, err := submit(t, follower, Command{Op: OpGet, Key: "zero"})
+		if err != nil || res.Value == nil || *res.Value != 0 {
+			t.Fatalf("%s: forwarded read of 0 = %+v %v, want value 0", mode, res, err)
+		}
+		res, err = submit(t, follower, Command{Op: OpGet, Key: "absent"})
+		if err != nil || res.Value != nil {
+			t.Fatalf("%s: forwarded read of absent key = %+v %v, want nil value", mode, res, err)
+		}
 	}
 }

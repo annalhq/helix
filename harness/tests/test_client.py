@@ -40,7 +40,7 @@ def test_bad_request_is_definite(node):
 def test_status(node):
     with Client(node) as c:
         st = c.status()["status"]
-    assert (st["id"], st["role"], st["leader"], st["read_mode"]) == ("kv-0", "leader", "kv-0", "local")
+    assert (st["id"], st["role"], st["leader"], st["read_mode"]) == ("kv-0", "leader", "kv-0", "leader")
     assert st["term"] >= 1 and st["last_applied"] <= st["commit_index"] <= st["last_log_index"]
 
 
