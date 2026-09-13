@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: control
+  namespace: helix
+  labels:
+    app: control
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: control
+      image: helix/control:dev
+      imagePullPolicy: Never
