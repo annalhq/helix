@@ -1,6 +1,10 @@
 package kv
 
-import "fmt"
+import (
+	"bytes"
+	"encoding/gob"
+	"fmt"
+)
 
 type Op string
 
@@ -33,4 +37,18 @@ func (c Command) Validate() error {
 		return BadRequest("missing key")
 	}
 	return nil
+}
+
+func encodeCommand(cmd Command) []byte {
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(cmd); err != nil {
+		panic(fmt.Sprintf("kv: encode command: %v", err))
+	}
+	return buf.Bytes()
+}
+
+func decodeCommand(b []byte) (Command, error) {
+	var cmd Command
+	err := gob.NewDecoder(bytes.NewReader(b)).Decode(&cmd)
+	return cmd, err
 }
