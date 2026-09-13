@@ -4,11 +4,14 @@ PY      := .venv/bin/python
 SEED    ?= 42
 KIND    ?= $(shell command -v kind 2>/dev/null || echo $(HOME)/go/bin/kind)
 
-.PHONY: build images kind-up kind-down deploy smoke-iptables test \
+.PHONY: build run-node images kind-up kind-down deploy smoke-iptables test \
         run-baseline run-naive run-fixed check viz
 
 build:
 	go build -o bin/kvnode ./cmd/kvnode
+
+run-node: build
+	./bin/kvnode --id kv-0 --client-addr 127.0.0.1:8000 --read-mode local
 
 images:
 	@echo "TODO (Part 2c): docker build + kind load"
@@ -26,11 +29,10 @@ deploy:
 smoke-iptables:
 	scripts/smoke_iptables.sh
 
-# pytest exits 5 when no tests are collected; treat that as success until Part 4.
 test:
 	go vet ./...
 	go test -race ./...
-	$(PY) -m pytest harness/tests -q || [ $$? -eq 5 ]
+	$(PY) -m pytest harness/tests -q
 
 run-baseline run-naive run-fixed check viz:
 	@echo "TODO: $@ (Parts 3-8)"
